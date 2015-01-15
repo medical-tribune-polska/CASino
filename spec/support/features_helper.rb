@@ -7,7 +7,7 @@ module FeatureHelpers
   end
 
   def sign_in(options = {})
-    visit login_path
+    visit login_path(service: options[:service])
     fill_in 'username', with: options[:username] || 'testuser'
     fill_in 'password', with: options[:password] || 'foobar123'
     click_button 'Login'

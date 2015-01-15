@@ -66,6 +66,14 @@ describe 'Login' do
     it { should have_text('Incorrect username or password') }
   end
 
+  context 'with service parameter' do
+    context 'with blank password' do
+      before { sign_in service: 'http://casino.rbcas.com/', password: '' }
+
+      it { current_url.should eq login_url(service: 'http://casino.rbcas.com/') }
+    end
+  end
+
   context 'with german locale' do
     before do
       page.driver.header 'Accept-Language', 'de'
