@@ -15,7 +15,7 @@ class CASino::ServiceTicket < ActiveRecord::Base
   end
 
   def self.cleanup_consumed_hard
-    self.delete_all(['created_at < ? AND consumed = ?', (CASino.config.service_ticket[:lifetime_consumed].seconds * 2).ago, true])
+    self.delete_all(['created_at < ? AND consumed = ?', (CASino.config.service_ticket[:lifetime_consumed] * 2).seconds.ago, true])
   end
 
 
@@ -38,6 +38,29 @@ class CASino::ServiceTicket < ActiveRecord::Base
       CASino.config.service_ticket[:lifetime_unconsumed]
     end
     (Time.now - (self.created_at || Time.now)) > lifetime
+  end
+
+  def logout_from_sites
+    send_single_sign_out_notification
+  end
+
+  def login_as_someone_else session_id
+    self.consumed = false
+    self.created_at = Time.now
+    self.save
+    #Rails.logger.warn service_with_ticket_url
+    #Rails.logger.warn "sess_id #{session_id}"
+    resp = CallWithCookie.new.call service_with_ticket_url, { '_session_id' => session_id }
+    #Rails.logger.warn resp.body
+    if resp.success?
+      #Rails.logger.warn "JESDOPSZ"
+      resp.body.force_encoding("UTF-8")
+    else
+      #return nil to render failsafe version
+      raise Faraday::Error::ClientError.new("Application didn't return with success state")
+    end
+  rescue Faraday::Error::ClientError, URI::InvalidURIError => error
+    Rails.logger.warn "Failed to relogin #{error}"
   end
 
   private
