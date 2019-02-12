@@ -20,29 +20,62 @@ class CASino::LoginCredentialAcceptorProcessor < CASino::Processor
   #
   # @param [Hash] params parameters supplied by user
   # @param [String] user_agent user-agent delivered by the client
-  def process(params = nil, user_agent = nil)
+  def process(params = nil, user_agent = nil, url = nil, cookies = nil)
     @params = params || {}
     @user_agent = user_agent
+    @url = url
+    @cookies = cookies
     if login_ticket_valid?(@params[:lt])
       authenticate_user
     else
       @listener.invalid_login_ticket(acquire_login_ticket)
+      false
     end
   end
 
   private
   def authenticate_user
-    authentication_result = validate_login_credentials(@params[:username], @params[:password])
+    host = HelperProxy.instance.get_host_from_url @params[:service]||@url
+    authentication_result = validate_login_credentials(@params[:username], @params[:password], host, @user_agent)
     if !authentication_result.nil?
-      user_logged_in(authentication_result)
+      user = authentication_result[:user_data].delete(:user)
+      dev = user.user_devices.where(fingerprint: User.device_fingerprint).first
+      #in case of changes here maybe it would be good to change it in dps/api/SignInWithCredentials
+      if user.blocked?
+        Rails.logger.warn "2"
+        return false if @params[:dps]
+        user.log_blocked_login authentication_result[:user_data][:site], dev
+        @listener.account_blocked(acquire_login_ticket, user)
+      elsif user.confirmed_email
+        PerdixImportJob.perform_later(user) if !Rails.env.test?
+        Rails.logger.warn "[ok]"
+        if authentication_result[:user_data][:old_pw].nil?
+          user.log_success_login authentication_result[:user_data][:un], authentication_result[:user_data][:site], dev
+        else
+          user.log_success_login_oldpw authentication_result[:user_data][:un], authentication_result[:user_data][:site], dev
+        end
+
+        CreateVodAccesses.call(@cookies, user)
+        CreateArticleAccesses.call(@cookies, user)
+
+        user_logged_in(authentication_result, user)
+        true
+      else
+        Rails.logger.warn "3"
+        return false if @params[:dps] == true
+        user.log_inactive_login authentication_result[:user_data][:site], dev
+        @listener.account_not_activated(acquire_login_ticket, user)
+      end
     else
+      Rails.logger.warn "4"
+      return false if @params[:dps] == true
       @listener.invalid_login_credentials(acquire_login_ticket)
     end
   end
 
-  def user_logged_in(authentication_result)
+  def user_logged_in(authentication_result, user)
     long_term = @params[:rememberMe]
-    ticket_granting_ticket = acquire_ticket_granting_ticket(authentication_result, @user_agent, long_term)
+    ticket_granting_ticket = acquire_ticket_granting_ticket(authentication_result, user.current_service_group_name+@user_agent, long_term)
     if ticket_granting_ticket.awaiting_two_factor_authentication?
       @listener.two_factor_authentication_pending(ticket_granting_ticket.ticket)
     else
@@ -51,9 +84,13 @@ class CASino::LoginCredentialAcceptorProcessor < CASino::Processor
           acquire_service_ticket(ticket_granting_ticket, @params[:service], true).service_with_ticket_url
         end
         if long_term
-          @listener.user_logged_in(url, ticket_granting_ticket.ticket, CASino.config.ticket_granting_ticket[:lifetime_long_term].seconds.from_now)
+          url = url.gsub(/:\/\//, "://#{@params[:subdomain]}.") if !@params[:subdomain].blank?
+          Rails.logger.warn "url1: #{url}"
+          @listener.user_logged_in(url, ticket_granting_ticket.ticket, CASino.config.ticket_granting_ticket[:lifetime_long_term].seconds.from_now, user, @params[:dps])
         else
-          @listener.user_logged_in(url, ticket_granting_ticket.ticket)
+          url = url.gsub(/:\/\//, "://#{@params[:subdomain]}.") if !@params[:subdomain].blank?
+          Rails.logger.warn "url2: #{url}"
+          @listener.user_logged_in(url, ticket_granting_ticket.ticket, nil, user, @params[:dps])
         end
       rescue ServiceNotAllowedError => e
         @listener.service_not_allowed(clean_service_url @params[:service])
