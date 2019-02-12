@@ -3,12 +3,11 @@ require 'casino/authenticator'
 module CASino
   module ProcessorConcern
     module Authentication
-
-      def validate_login_credentials(username, password)
+      def validate_login_credentials(username, password, service_name = nil, user_agent = nil)
         authentication_result = nil
         authenticators.each do |authenticator_name, authenticator|
           begin
-            data = authenticator.validate(username, password)
+            data = authenticator.validate(username, password, service_name, user_agent)
           rescue CASino::Authenticator::AuthenticatorError => e
             Rails.logger.error "Authenticator '#{authenticator_name}' (#{authenticator.class}) raised an error: #{e}"
           end

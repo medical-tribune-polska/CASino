@@ -31,7 +31,8 @@ class CASino::LoginCredentialRequestorProcessor < CASino::Processor
 
   private
   def handle_allowed_service
-    if !@params[:renew] && (@ticket_granting_ticket = find_valid_ticket_granting_ticket(@cookies[:tgt], @user_agent))
+    group_name = HelperProxy.instance.get_site_group_name_from_url @params[:service]
+    if !@params[:renew] && (@ticket_granting_ticket = find_valid_ticket_granting_ticket(@cookies[:tgt], group_name+@user_agent))
       handle_logged_in
     else
       handle_not_logged_in

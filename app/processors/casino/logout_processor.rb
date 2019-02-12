@@ -2,22 +2,35 @@
 class CASino::LogoutProcessor < CASino::Processor
   include CASino::ProcessorConcern::TicketGrantingTickets
 
-  # This method will call `#user_logged_out` and may supply an URL that should be presented to the user.
-  # As per specification, the URL specified by "url" SHOULD be on the logout page with descriptive text.
-  # For example, "The application you just logged out of has provided a link it would like you to follow.
-  # Please click here to access http://www.go-back.edu/."
-  #
-  # @param [Hash] params parameters supplied by user
-  # @param [Hash] cookies cookies supplied by user
-  # @param [String] user_agent user-agent delivered by the client
   def process(params = nil, cookies = nil, user_agent = nil)
+    user = User.current_user
     params ||= {}
     cookies ||= {}
+    #rescue nil - in rare cases when there is no current user
+    dev = User.current_user.user_devices.where(fingerprint: User.device_fingerprint).first rescue nil
+    end_open_user_sessions(cookies[:tgt])
     remove_ticket_granting_ticket(cookies[:tgt], user_agent)
-    if params[:service] && CASino::ServiceRule.allowed?(params[:service])
-      @listener.user_logged_out(params[:service], true)
+    dest = params[:destination]
+    if dest && CASino::ServiceRule.allowed?(dest)
+      notes = I18n.t "users.activity_logs.logout_redirection", site: dest
+      user.log_activity(:logout, dev,
+        { login: user.login, id: user.id, notes: notes }) rescue nil
+
+      @listener.user_logged_out(dest, true)
     else
+      user.log_activity(:logout, dev,
+        { login: user.login, id: user.id, notes: "" }) rescue nil
+
       @listener.user_logged_out(params[:url])
+    end
+  end
+
+  def end_open_user_sessions tgt
+    tgts=CASino::TicketGrantingTicket.where(ticket: tgt)
+    tgts.each do |tgt|
+      tgt.service_tickets.each do |st|
+        st.logout_from_sites
+      end
     end
   end
 end
